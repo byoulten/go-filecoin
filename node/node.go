@@ -95,15 +95,20 @@ type nodeChainSyncer interface {
 	HandleNewTipset(ctx context.Context, tipsetCids types.TipSetKey, from peer.ID) error
 }
 
+type faultMonitor interface {
+	HandleNewTipSet(context.Context, chain.TipsetIterator, types.TipSet) error
+}
+
 // Node represents a full Filecoin node.
 type Node struct {
 	host     host.Host
 	PeerHost host.Host
 
-	Consensus   consensus.Protocol
-	ChainReader nodeChainReader
-	Syncer      nodeChainSyncer
-	PowerTable  consensus.PowerTableView
+	Consensus    consensus.Protocol
+	ChainReader  nodeChainReader
+	Syncer       nodeChainSyncer
+	FaultMonitor faultMonitor
+	PowerTable   consensus.PowerTableView
 
 	BlockMiningAPI *block.MiningAPI
 	PorcelainAPI   *porcelain.API
@@ -430,6 +435,8 @@ func (nc *Config) Build(ctx context.Context) (*Node, error) {
 	msgPool := core.NewMessagePool(nc.Repo.Config().Mpool, consensus.NewIngestionValidator(chainState, nc.Repo.Config().Mpool))
 	inbox := core.NewInbox(msgPool, core.InboxMaxAgeTipsets, chainStore)
 
+	faultMonitor := consensus.FaultMonitor{}
+
 	msgQueue := core.NewMessageQueue()
 	outboxPolicy := core.NewMessageQueuePolicy(chainStore, core.OutboxMaxAgeRounds)
 	msgPublisher := newDefaultMessagePublisher(pubsub.NewPublisher(fsub), net.MessageTopic, msgPool)
@@ -441,6 +448,7 @@ func (nc *Config) Build(ctx context.Context) (*Node, error) {
 		cborStore:    &ipldCborStore,
 		Consensus:    nodeConsensus,
 		ChainReader:  chainStore,
+		FaultMonitor: faultMonitor,
 		Syncer:       chainSyncer,
 		PowerTable:   powerTable,
 		Fetcher:      fetcher,
@@ -713,6 +721,11 @@ func (node *Node) handleNewChainHeads(ctx context.Context, prevHead types.TipSet
 				if err != nil {
 					log.Error(err)
 				}
+			}
+
+			err := node.FaultMonitor.HandleNewTipSet(ctx, newHead)
+			if err != nil {
+				log.Error("fault monitoring new block from network", err)
 			}
 		case <-ctx.Done():
 			return
