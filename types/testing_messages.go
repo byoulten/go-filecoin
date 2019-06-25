@@ -58,3 +58,19 @@ func (mm *MessageMaker) NewSignedMessage(from address.Address, nonce uint64) *Si
 	require.NoError(mm.t, err)
 	return signed
 }
+
+// NewSubmiPoStMsg creates a new Submit Post message.
+func (mm *MessageMaker) NewSubmiPoStMsg(from address.Address, nonce uint64) *SignedMessage {
+	to, err := address.NewActorAddress([]byte("destination"))
+	require.NoError(mm.t, err)
+	msg := NewMessage(
+		from,
+		to,
+		nonce,
+		ZeroAttoFIL,
+		"submitPost",
+		[]byte("params"))
+	signed, err := NewSignedMessage(*msg, mm.signer, mm.DefaultGasPrice, mm.DefaultGasUnits)
+	require.NoError(mm.t, err)
+	return signed
+}
