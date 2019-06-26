@@ -95,8 +95,8 @@ type nodeChainSyncer interface {
 	HandleNewTipset(ctx context.Context, tipsetCids types.TipSetKey, from peer.ID) error
 }
 
-type faultMonitor interface {
-	HandleNewTipSet(context.Context, chain.TipsetIterator, types.TipSet) error
+type storageFaultMonitor interface {
+	HandleNewTipSet(ctx context.Context, iter consensus.TSIter, newTs types.TipSet) error
 }
 
 // Node represents a full Filecoin node.
@@ -104,11 +104,11 @@ type Node struct {
 	host     host.Host
 	PeerHost host.Host
 
-	Consensus    consensus.Protocol
-	ChainReader  nodeChainReader
-	Syncer       nodeChainSyncer
-	FaultMonitor faultMonitor
-	PowerTable   consensus.PowerTableView
+	Consensus           consensus.Protocol
+	ChainReader         nodeChainReader
+	Syncer              nodeChainSyncer
+	StorageFaultMonitor storageFaultMonitor
+	PowerTable          consensus.PowerTableView
 
 	BlockMiningAPI *block.MiningAPI
 	PorcelainAPI   *porcelain.API
@@ -435,8 +435,6 @@ func (nc *Config) Build(ctx context.Context) (*Node, error) {
 	msgPool := core.NewMessagePool(nc.Repo.Config().Mpool, consensus.NewIngestionValidator(chainState, nc.Repo.Config().Mpool))
 	inbox := core.NewInbox(msgPool, core.InboxMaxAgeTipsets, chainStore)
 
-	faultMonitor := consensus.StorageFaultMonitor{}
-
 	msgQueue := core.NewMessageQueue()
 	outboxPolicy := core.NewMessageQueuePolicy(chainStore, core.OutboxMaxAgeRounds)
 	msgPublisher := newDefaultMessagePublisher(pubsub.NewPublisher(fsub), net.MessageTopic, msgPool)
@@ -448,7 +446,6 @@ func (nc *Config) Build(ctx context.Context) (*Node, error) {
 		cborStore:    &ipldCborStore,
 		Consensus:    nodeConsensus,
 		ChainReader:  chainStore,
-		FaultMonitor: faultMonitor,
 		Syncer:       chainSyncer,
 		PowerTable:   powerTable,
 		Fetcher:      fetcher,
@@ -717,15 +714,15 @@ func (node *Node) handleNewChainHeads(ctx context.Context, prevHead types.TipSet
 			prevHead = newHead
 
 			if node.StorageMiner != nil {
-				err := node.StorageMiner.OnNewHeaviestTipSet(newHead)
-				if err != nil {
+				if err := node.StorageMiner.OnNewHeaviestTipSet(newHead); err != nil {
 					log.Error(err)
 				}
-			}
 
-			err := node.FaultMonitor.HandleNewTipSet(ctx, newHead)
-			if err != nil {
-				log.Error("fault monitoring new block from network", err)
+				// Storage fault monitor must query miner for proving periods, etc.
+				iter := chain.IterAncestors(ctx, node.ChainReader, head)
+				if err := node.StorageFaultMonitor.HandleNewTipSet(ctx, iter, head); err != nil {
+					log.Error("fault monitoring new block from network", err)
+				}
 			}
 		case <-ctx.Done():
 			return
@@ -863,6 +860,7 @@ func (node *Node) StartMining(ctx context.Context) error {
 		return errors.Wrap(err, "failed to initialize storage miner")
 	}
 	node.StorageMiner = storageMiner
+	node.StorageFaultMonitor = consensus.NewStorageFaultMonitor(node.PorcelainAPI, minerAddr)
 
 	// loop, turning sealing-results into commitSector messages to be included
 	// in the chain

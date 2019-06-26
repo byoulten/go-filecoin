@@ -4,15 +4,17 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ipfs/go-log"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/filecoin-project/go-filecoin/address"
 	"github.com/filecoin-project/go-filecoin/chain"
 	"github.com/filecoin-project/go-filecoin/consensus"
 	"github.com/filecoin-project/go-filecoin/core"
 	"github.com/filecoin-project/go-filecoin/testhelpers"
 	tf "github.com/filecoin-project/go-filecoin/testhelpers/testflags"
 	"github.com/filecoin-project/go-filecoin/types"
-	"github.com/ipfs/go-log"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
@@ -39,9 +41,15 @@ func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
 	t1 := requireTipset(t, newBlk)
 	iter := chain.IterAncestors(ctx, chainer, t1)
 
-	fm := consensus.NewStorageFaultMonitor()
+	fm := consensus.NewStorageFaultMonitor(&testMinerPorcelain{}, beyonce)
 	err := fm.HandleNewTipSet(ctx, iter, t1)
 	assert.NoError(t, err)
+}
+
+type testMinerPorcelain struct{}
+
+func (tmp *testMinerPorcelain) MinerGetProvingPeriod(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error) {
+	return types.NewBlockHeight(1), types.NewBlockHeight(2), nil
 }
 
 func requireTipset(t *testing.T, blocks ...*types.Block) types.TipSet {
