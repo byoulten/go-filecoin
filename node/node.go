@@ -719,9 +719,14 @@ func (node *Node) handleNewChainHeads(ctx context.Context, prevHead types.TipSet
 				}
 
 				// Storage fault monitor must query miner for proving periods, etc.
-				iter := chain.IterAncestors(ctx, node.ChainReader, head)
-				if err := node.StorageFaultMonitor.HandleNewTipSet(ctx, iter, head); err != nil {
-					log.Error("fault monitoring new block from network", err)
+				if node.StorageFaultMonitor != nil {
+					iter := chain.IterAncestors(ctx, node.ChainReader, head)
+					if err := node.StorageFaultMonitor.HandleNewTipSet(ctx, iter, head); err != nil {
+						log.Error("fault monitoring new block from network", err)
+					}
+				} else {
+					// don't silently fail on this - something went horribly wrong
+					log.Error("node.StorageFaultMonitor is not set -- cannot start fault monitoring")
 				}
 			}
 		case <-ctx.Done():
