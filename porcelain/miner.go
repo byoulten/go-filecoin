@@ -408,3 +408,13 @@ func MinerGetProvingPeriod(ctx context.Context, plumbing mgpidAPI, minerAddr add
 	end = types.NewBlockHeightFromBytes(res[1])
 	return start, end, err
 }
+
+// MinerGetGenerationAttackThreshold queries for the generation attack threshold
+func MinerGetGenerationAttackThreshold(ctx context.Context, plumbing mgpidAPI, minerAddr address.Address) (*types.BlockHeight, error) {
+	res, err := plumbing.MessageQuery(ctx, address.Undef, minerAddr, "getGenerationAttackThreshold")
+	if err != nil {
+		return nil, err
+	}
+	thr := types.NewBlockHeightFromBytes(res[0])
+	return thr, nil
+}

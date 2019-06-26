@@ -146,6 +146,11 @@ func (a *API) MinerGetProvingPeriod(ctx context.Context, minerAddr address.Addre
 	return MinerGetProvingPeriod(ctx, a, minerAddr)
 }
 
+// MinerGetGenerationAttackThreshold queries for the generation attack threshold
+func (a *API) MinerGetGenerationAttackThreshold(ctx context.Context, minerAddr address.Address) (*types.BlockHeight, error) {
+	return MinerGetGenerationAttackThreshold(ctx, a, minerAddr)
+}
+
 // MinerSetPrice configures the price of storage. See implementation for details.
 func (a *API) MinerSetPrice(ctx context.Context, from address.Address, miner address.Address, gasPrice types.AttoFIL, gasLimit types.GasUnits, price types.AttoFIL, expiry *big.Int) (MinerSetPriceResponse, error) {
 	return MinerSetPrice(ctx, a, from, miner, gasPrice, gasLimit, price, expiry)

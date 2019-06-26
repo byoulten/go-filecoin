@@ -19,6 +19,7 @@ type TSIter interface {
 // MonitorPorcelain is an interface for the functionality StorageFaultMonitor needs
 type MonitorPorcelain interface {
 	MinerGetProvingPeriod(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error)
+	MinerGetGenerationAttackThreshold(context.Context, address.Address) *types.BlockHeight
 }
 
 // StorageFaultMonitor checks each new tipset for storage faults, a.k.a. market faults.
@@ -54,6 +55,7 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 				sfm.log.Debug("GOT submitPoSt message")
 				// check for late submission
 				// sfm.porc.MinerGetProvingPeriod(ctx, sfm.minerAddr)
+				// sfm.porc.MinerGetGenerationAttackThreshold(ctx, sfm.minerAddr)
 				// check for submission before generation attack threshold
 				// check for missing sectors
 				// check for early sector removal
