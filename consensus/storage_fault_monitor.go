@@ -105,8 +105,8 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 				//	sfm.log.Debug("submitPoSt not seen within generation attack threshold")
 				//}
 
-				// check for missing sectors  -- how?
-				// check for early sector removal -- how?
+				// check for missing sectors
+				// check for early sector removal
 			default:
 				continue
 			}
