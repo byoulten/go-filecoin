@@ -402,7 +402,7 @@ func MinerGetPeerID(ctx context.Context, plumbing mgpidAPI, minerAddr address.Ad
 func MinerGetProvingPeriod(ctx context.Context, plumbing mgpidAPI, minerAddr address.Address) (start, end *types.BlockHeight, err error) {
 	res, err := plumbing.MessageQuery(ctx, address.Undef, minerAddr, "getProvingPeriod")
 	if err != nil {
-		return start, end, err
+		return nil, nil, err
 	}
 	start = types.NewBlockHeightFromBytes(res[0])
 	end = types.NewBlockHeightFromBytes(res[1])
@@ -415,6 +415,5 @@ func MinerGetGenerationAttackThreshold(ctx context.Context, plumbing mgpidAPI, m
 	if err != nil {
 		return nil, err
 	}
-	thr := types.NewBlockHeightFromBytes(res[0])
-	return thr, nil
+	return types.NewBlockHeightFromBytes(res[0]), nil
 }
