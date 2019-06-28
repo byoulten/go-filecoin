@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	logging "github.com/ipfs/go-log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -18,6 +19,7 @@ import (
 
 func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
 	tf.UnitTest(t)
+	logging.SetDebugLogging()
 
 	ctx := context.Background()
 	keys := types.MustGenerateKeyInfo(2, 42)
@@ -27,7 +29,7 @@ func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
 	davante := mm.Addresses()[1]
 
 	chainer := th.NewFakeChainProvider()
-	_ = chainer.NewBlock(0)
+	root := chainer.NewBlock(0)
 
 	q := core.NewMessageQueue()
 	msgs := []*types.SignedMessage{
@@ -35,13 +37,31 @@ func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
 		RequireEnqueue(ctx, t, q, mm.NewSignedMessage(davante, 2), 101),
 	}
 
-	newBlk := chainer.NewBlockWithMessages(1, msgs)
+	newBlk := chainer.NewBlockWithMessages(1, msgs, root)
 	t1 := RequireTipset(t, newBlk)
 	iter := chain.IterAncestors(ctx, chainer, t1)
 
 	fm := NewStorageFaultMonitor(&TestMinerPorcelain{}, beyonce)
 	err := fm.HandleNewTipSet(ctx, iter, t1)
 	assert.NoError(t, err)
+
+	t.Run("error when submitPoSt is missing proofs", func(t *testing.T) {
+		q2 := core.NewMessageQueue()
+
+		msg := mm.NewSubmiPoStMsg(davante, 3)
+		msg.MeteredMessage.Params = []byte{}
+
+		q2Msgs := []*types.SignedMessage{
+			RequireEnqueue(ctx, t, q2, msg, 102),
+		}
+		q2blk := chainer.NewBlockWithMessages(2, q2Msgs, newBlk)
+
+		t2 := RequireTipset(t, q2blk)
+		iter := chain.IterAncestors(ctx, chainer, t2)
+
+		err := fm.HandleNewTipSet(ctx, iter, t2)
+		assert.Error(t, err, "foo")
+	})
 }
 
 func TestMinerLastSeen(t *testing.T) {
@@ -134,8 +154,8 @@ type TestMinerPorcelain struct{}
 func (tmp *TestMinerPorcelain) MinerGetProvingPeriod(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error) {
 	return types.NewBlockHeight(1), types.NewBlockHeight(2), nil
 }
-func (tmp *TestMinerPorcelain) MinerGetGenerationAttackThreshold(ctx context.Context, miner address.Address) *types.BlockHeight {
-	return types.NewBlockHeight(100)
+func (tmp *TestMinerPorcelain) MinerGetGenerationAttackThreshold(ctx context.Context, miner address.Address) (*types.BlockHeight, error) {
+	return types.NewBlockHeight(100), nil
 }
 
 func assertLastSeenAt(t *testing.T, iter TSIter, miner address.Address, limit, expectedBh uint64) {

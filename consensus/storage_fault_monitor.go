@@ -5,7 +5,6 @@ import (
 
 	logging "github.com/ipfs/go-log"
 
-	"github.com/filecoin-project/go-filecoin/abi"
 	"github.com/filecoin-project/go-filecoin/address"
 	"github.com/filecoin-project/go-filecoin/types"
 )
@@ -69,12 +68,12 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 	for i := 0; i < head.Len(); i++ {
 		blk := head.At(i)
 		for _, msg := range blk.Messages {
-			m := msg.MeteredMessage.Method
-			miner := msg.MeteredMessage.From
+			m := msg.Method
+			miner := msg.From
 			switch m {
 			case "submitPost":
 				sfm.log.Debug("GOT submitPoSt message")
-				missing, err := isMissingProof(&msg.MeteredMessage)
+				missing, err := isMissingProof(msg)
 				if err != nil {
 					return err
 				}
@@ -82,28 +81,28 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 					sfm.log.Debug("submitPost message missing proof at blockheight %d for miner %s", bh, miner.String())
 				}
 
-				//curHeight := types.NewBlockHeight(bh)
+				curHeight := types.NewBlockHeight(bh)
 
-				// check provided proof(s) for late submission
-				//lateSubmissionLimit := curHeight.Sub(sfm.pdStart)
-				//lastSeen, err := MinerLastSeen(miner, iter, lateSubmissionLimit)
-				//if err != nil {
-				//	return err
-				//}
-				//if lastSeen == nil {
-				//	sfm.log.Debug("submitPost message submitted late")
-				//}
+				//check provided proof(s) for late submission
+				lateSubmissionLimit := curHeight.Sub(sfm.pdStart)
+				lastSeen, err := MinerLastSeen(miner, iter, lateSubmissionLimit)
+				if err != nil {
+					return err
+				}
+				if lastSeen == nil {
+					sfm.log.Debug("submitPost message submitted late")
+				}
 
 				// check for submission before generation attack threshold
 				// this continues the iterator where we left off and looks an additional
 				// generation-attack-threshold block height.
-				//lastSeen, err = MinerLastSeen(miner, iter, sfm.gat)
-				//if err != nil {
-				//	return err
-				//}
-				//if lastSeen == nil {
-				//	sfm.log.Debug("submitPoSt not seen within generation attack threshold")
-				//}
+				lastSeen, err = MinerLastSeen(miner, iter, sfm.gat)
+				if err != nil {
+					return err
+				}
+				if lastSeen == nil {
+					sfm.log.Debug("submitPoSt not seen within generation attack threshold")
+				}
 
 				// check for missing sectors
 				// check for early sector removal
@@ -115,12 +114,8 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 	return nil
 }
 
-func isMissingProof(msg *types.MeteredMessage) (bool, error) {
-	params, err := abi.DecodeValues(msg.Params, []abi.Type{abi.Parameters})
-	if err != nil {
-		return false, err
-	}
-	if len(params) == 0 {
+func isMissingProof(msg *types.SignedMessage) (bool, error) {
+	if len(msg.Params) == 0 {
 		return true, nil
 	}
 	return false, nil
@@ -154,8 +149,8 @@ func MinerLastSeen(miner address.Address, iter TSIter, lookBackLimit *types.Bloc
 
 func poStMessageFrom(miner address.Address, msgs []*types.SignedMessage) (msg *types.SignedMessage) {
 	for _, msg = range msgs {
-		meth := msg.MeteredMessage.Method
-		from := msg.MeteredMessage.From.String()
+		meth := msg.Method
+		from := msg.From.String()
 		if from == miner.String() && meth == "submitPost" {
 			return msg
 		}
