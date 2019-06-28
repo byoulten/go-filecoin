@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"context"
+	"github.com/ipfs/go-cid"
 
 	logging "github.com/ipfs/go-log"
 
@@ -20,6 +21,24 @@ type TSIter interface {
 type MonitorPorcelain interface {
 	MinerGetProvingPeriod(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error)
 	MinerGetGenerationAttackThreshold(context.Context, address.Address) (*types.BlockHeight, error)
+}
+
+const (
+	// LateSubmission indicates the miner did not submitPoSt within the proving period
+	LateSubmission = 51
+	// AfterGenerationAttackThreshold indicates the miner did not submitPoSt within the
+	// Generation Attack Threshold
+	AfterGenerationAttackThreshold = 52
+	// EmptyProofs indicates the proofs array is empty for the submitPoSt message
+	EmptyProofs = 53
+)
+
+// StorageFault holds a record of a miner storage fault
+type StorageFault struct {
+	Code     uint8
+	Miner    address.Address
+	BlockCID cid.Cid
+	// LastSeenBlockHeight?
 }
 
 // StorageFaultMonitor checks each new tipset for storage faults, a.k.a. market faults.
@@ -44,26 +63,28 @@ func NewStorageFaultMonitor(porcelain MonitorPorcelain, minerAddr address.Addres
 }
 
 // HandleNewTipSet receives an iterator over the current chain, and a new tipset
-// and checks the new tipset for fault errors, iterating over iter
-func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter, newTs types.TipSet) error {
-	var err error
+// and checks the new tipset for storage faults, iterating over iter
+func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter, newTs types.TipSet) ([]*StorageFault, error) {
+	var emptyFaults []*StorageFault
 
 	// iterate over blocks in the new tipset and detect faults
+	// Maybe hash all the miner addresses with submitPoSts first & then go down the chain once
 	head := iter.Value()
 	bh, err := head.Height()
 	if err != nil {
-		return err
+		return emptyFaults, err
 	}
 
 	sfm.pdStart, sfm.pdEnd, err = sfm.porc.MinerGetProvingPeriod(ctx, sfm.minerAddr)
 	if err != nil {
-		return err
+		return emptyFaults, err
 	}
 
 	sfm.gat, err = sfm.porc.MinerGetGenerationAttackThreshold(ctx, sfm.minerAddr)
 	if err != nil {
-		return err
+		return emptyFaults, err
 	}
+	faults := emptyFaults
 
 	for i := 0; i < head.Len(); i++ {
 		blk := head.At(i)
@@ -72,13 +93,17 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 			miner := msg.From
 			switch m {
 			case "submitPost":
-				sfm.log.Debug("GOT submitPoSt message")
-				missing, err := isMissingProof(msg)
-				if err != nil {
-					return err
-				}
-				if missing {
+
+				if emptyProofs(msg) {
+					fault := StorageFault{
+						BlockCID: blk.Cid(),
+						Code:     EmptyProofs,
+						Miner:    miner,
+					}
+
+					faults = append(faults, &fault)
 					sfm.log.Debug("submitPost message missing proof at blockheight %d for miner %s", bh, miner.String())
+					continue
 				}
 
 				curHeight := types.NewBlockHeight(bh)
@@ -87,23 +112,33 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 				lateSubmissionLimit := curHeight.Sub(sfm.pdStart)
 				lastSeen, err := MinerLastSeen(miner, iter, lateSubmissionLimit)
 				if err != nil {
-					return err
+					return faults, err
 				}
 				if lastSeen == nil {
-					sfm.log.Debug("submitPost message submitted late")
-				}
+					fault := StorageFault{
+						BlockCID: blk.Cid(),
+						Miner:    miner,
+					}
 
-				// check for submission before generation attack threshold
-				// this continues the iterator where we left off and looks an additional
-				// generation-attack-threshold block height.
-				lastSeen, err = MinerLastSeen(miner, iter, sfm.gat)
-				if err != nil {
-					return err
-				}
-				if lastSeen == nil {
-					sfm.log.Debug("submitPoSt not seen within generation attack threshold")
-				}
+					// check for submission before generation attack threshold
+					// this continues the iterator where we left off and looks an additional
+					// generation-attack-threshold block height.
+					lastSeen, err = MinerLastSeen(miner, iter, sfm.gat)
+					if err != nil {
+						return faults, err
+					}
 
+					if lastSeen == nil {
+						sfm.log.Debug("submitPoSt not seen within generation attack threshold")
+						fault.Code = AfterGenerationAttackThreshold
+					} else {
+						sfm.log.Debug("submitPost message submitted late")
+						fault.Code = LateSubmission
+					}
+
+					faults = append(faults, &fault)
+					continue
+				}
 				// check for missing sectors
 				// check for early sector removal
 			default:
@@ -111,18 +146,20 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 			}
 		}
 	}
-	return nil
+	return faults, nil
 }
 
-func isMissingProof(msg *types.SignedMessage) (bool, error) {
+func emptyProofs(msg *types.SignedMessage) bool {
 	if len(msg.Params) == 0 {
-		return true, nil
+		return true
 	}
-	return false, nil
+	return false
 }
 
 // MinerLastSeen returns the block height at which miner last sent a `submitPost` message, or
 // nil if it was not seen within lookBackLimit blocks ago, not counting the head.
+// Is it useful to cache the block height at which the miner was last seen? If not this can just return
+// a bool + error
 func MinerLastSeen(miner address.Address, iter TSIter, lookBackLimit *types.BlockHeight) (*types.BlockHeight, error) {
 	// iterate in the rest of the chain and check head against rest of chain for faults
 	var err error

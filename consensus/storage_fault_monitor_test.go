@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	logging "github.com/ipfs/go-log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -19,7 +18,6 @@ import (
 
 func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
 	tf.UnitTest(t)
-	logging.SetDebugLogging()
 
 	ctx := context.Background()
 	keys := types.MustGenerateKeyInfo(2, 42)
@@ -42,8 +40,9 @@ func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
 	iter := chain.IterAncestors(ctx, chainer, t1)
 
 	fm := NewStorageFaultMonitor(&TestMinerPorcelain{}, beyonce)
-	err := fm.HandleNewTipSet(ctx, iter, t1)
+	faults, err := fm.HandleNewTipSet(ctx, iter, t1)
 	assert.NoError(t, err)
+	assert.Empty(t, faults)
 
 	t.Run("error when submitPoSt is missing proofs", func(t *testing.T) {
 		q2 := core.NewMessageQueue()
@@ -55,13 +54,52 @@ func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
 			RequireEnqueue(ctx, t, q2, msg, 102),
 		}
 		q2blk := chainer.NewBlockWithMessages(2, q2Msgs, newBlk)
-
 		t2 := RequireTipset(t, q2blk)
 		iter := chain.IterAncestors(ctx, chainer, t2)
 
-		err := fm.HandleNewTipSet(ctx, iter, t2)
-		assert.Error(t, err, "foo")
+		faults, err := fm.HandleNewTipSet(ctx, iter, t2)
+		assert.NoError(t, err)
+		require.Len(t, faults, 1)
+		assert.Equal(t, EmptyProofs, faults[0].Code)
 	})
+}
+
+func TestStorageFaultMonitor_HandleNewTipSet_LateSubmission(t *testing.T) {
+	tf.UnitTest(t)
+
+	ctx := context.Background()
+	keys := types.MustGenerateKeyInfo(2, 42)
+	mm := types.NewMessageMaker(t, keys)
+
+	xavier := mm.Addresses()[0]
+	yoli := mm.Addresses()[1]
+
+	chainer := th.NewFakeChainProvider()
+	root := chainer.NewBlock(0)
+
+	q := core.NewMessageQueue()
+	msgs := []*types.SignedMessage{
+		RequireEnqueue(ctx, t, q, mm.NewSubmiPoStMsg(xavier, 1), 100),
+		RequireEnqueue(ctx, t, q, mm.NewSignedMessage(yoli, 2), 101),
+	}
+
+	q1 := chainer.NewBlockWithMessages(3, msgs, root)
+	q2 := chainer.NewBlockWithMessages(4, []*types.SignedMessage{}, q1, root)
+	q3 := chainer.NewBlockWithMessages(5, []*types.SignedMessage{}, q2, q1, root)
+	q4 := chainer.NewBlockWithMessages(6, []*types.SignedMessage{}, q3, q2, q1, root)
+
+	t1 := RequireTipset(t, q4)
+	iter := chain.IterAncestors(ctx, chainer, t1)
+
+	fm := NewStorageFaultMonitor(&TestMinerPorcelain{}, xavier)
+	faults, err := fm.HandleNewTipSet(ctx, iter, t1)
+	assert.NoError(t, err)
+	assert.Empty(t, faults)
+
+	t.Run("error when submitPoSt is late", func(t *testing.T) {
+		require.True(t, false)
+	})
+
 }
 
 func TestMinerLastSeen(t *testing.T) {

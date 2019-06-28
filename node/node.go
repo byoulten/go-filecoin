@@ -96,7 +96,7 @@ type nodeChainSyncer interface {
 }
 
 type storageFaultMonitor interface {
-	HandleNewTipSet(ctx context.Context, iter consensus.TSIter, newTs types.TipSet) error
+	HandleNewTipSet(ctx context.Context, iter consensus.TSIter, newTs types.TipSet) ([]*consensus.StorageFault, error)
 }
 
 // Node represents a full Filecoin node.
