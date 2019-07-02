@@ -24,13 +24,14 @@ type MonitorPorcelain interface {
 }
 
 const (
-	// LateSubmission indicates the miner did not submitPoSt within the proving period
-	LateSubmission = 51
+	// AfterProvingPeriod indicates the miner did not submitPoSt within the proving period
+	AfterProvingPeriod = 51
 	// AfterGenerationAttackThreshold indicates the miner did not submitPoSt within the
 	// Generation Attack Threshold
 	AfterGenerationAttackThreshold = 52
-	// EmptyProofs indicates the proofs array is empty for the submitPoSt message
-	EmptyProofs = 53
+	// MissingProof indicates there was no submitPoSt message from miner during the proving
+	// period, but one was expected
+	MissingProof = 53
 )
 
 // StorageFault holds a record of a miner storage fault
@@ -74,6 +75,7 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 	if err != nil {
 		return emptyFaults, err
 	}
+	var minersSeen []*address.Address
 
 	sfm.pdStart, sfm.pdEnd, err = sfm.porc.MinerGetProvingPeriod(ctx, sfm.minerAddr)
 	if err != nil {
@@ -91,68 +93,21 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 		for _, msg := range blk.Messages {
 			m := msg.Method
 			miner := msg.From
+			minersSeen = append(minersSeen, miner)
 			switch m {
 			case "submitPost":
-
-				if emptyProofs(msg) {
-					fault := StorageFault{
-						BlockCID: blk.Cid(),
-						Code:     EmptyProofs,
-						Miner:    miner,
-					}
-
-					faults = append(faults, &fault)
-					sfm.log.Debug("submitPost message missing proof at blockheight %d for miner %s", bh, miner.String())
-					continue
-				}
-
-				curHeight := types.NewBlockHeight(bh)
-
-				//check provided proof(s) for late submission
-				lateSubmissionLimit := curHeight.Sub(sfm.pdStart)
-				lastSeen, err := MinerLastSeen(miner, iter, lateSubmissionLimit)
-				if err != nil {
-					return faults, err
-				}
-				if lastSeen == nil {
-					fault := StorageFault{
-						BlockCID: blk.Cid(),
-						Miner:    miner,
-					}
-
-					// check for submission before generation attack threshold
-					// this continues the iterator where we left off and looks an additional
-					// generation-attack-threshold block height.
-					lastSeen, err = MinerLastSeen(miner, iter, sfm.gat)
-					if err != nil {
-						return faults, err
-					}
-
-					if lastSeen == nil {
-						sfm.log.Debug("submitPoSt not seen within generation attack threshold")
-						fault.Code = AfterGenerationAttackThreshold
-					} else {
-						sfm.log.Debug("submitPost message submitted late")
-						fault.Code = LateSubmission
-					}
-
-					faults = append(faults, &fault)
-					continue
-				}
-				// check for missing sectors
-				// check for early sector removal
+				// get FaultList from params
+				// iterate over FaultList and add
 			default:
 				continue
 			}
 		}
 	}
+	// pass minersSeen to func that checks
 	return faults, nil
 }
 
-func emptyProofs(msg *types.SignedMessage) bool {
-	if len(msg.Params) == 0 {
-		return true
-	}
+func missingPoSt() bool {
 	return false
 }
 
