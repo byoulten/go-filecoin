@@ -4,13 +4,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/filecoin-project/go-filecoin/actor"
 	"github.com/filecoin-project/go-filecoin/address"
 	"github.com/filecoin-project/go-filecoin/chain"
 	. "github.com/filecoin-project/go-filecoin/consensus"
 	"github.com/filecoin-project/go-filecoin/core"
+	"github.com/filecoin-project/go-filecoin/state"
 	th "github.com/filecoin-project/go-filecoin/testhelpers"
 	tf "github.com/filecoin-project/go-filecoin/testhelpers/testflags"
 	"github.com/filecoin-project/go-filecoin/types"
@@ -39,29 +42,10 @@ func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
 	t1 := RequireTipset(t, newBlk)
 	iter := chain.IterAncestors(ctx, chainer, t1)
 
-	fm := NewStorageFaultMonitor(&TestMinerPorcelain{}, beyonce)
+	fm := NewStorageFaultMonitor(&TestMinerPorcelain{}, alwaysHasPower)
 	faults, err := fm.HandleNewTipSet(ctx, iter, t1)
 	assert.NoError(t, err)
 	assert.Empty(t, faults)
-
-	t.Run("error when submitPoSt is missing proofs", func(t *testing.T) {
-		q2 := core.NewMessageQueue()
-
-		msg := mm.NewSubmiPoStMsg(davante, 3)
-		msg.MeteredMessage.Params = []byte{}
-
-		q2Msgs := []*types.SignedMessage{
-			RequireEnqueue(ctx, t, q2, msg, 102),
-		}
-		q2blk := chainer.NewBlockWithMessages(2, q2Msgs, newBlk)
-		t2 := RequireTipset(t, q2blk)
-		iter := chain.IterAncestors(ctx, chainer, t2)
-
-		faults, err := fm.HandleNewTipSet(ctx, iter, t2)
-		assert.NoError(t, err)
-		require.Len(t, faults, 1)
-		assert.Equal(t, EmptyProofs, faults[0].Code)
-	})
 }
 
 func TestStorageFaultMonitor_HandleNewTipSet_LateSubmission(t *testing.T) {
@@ -91,15 +75,10 @@ func TestStorageFaultMonitor_HandleNewTipSet_LateSubmission(t *testing.T) {
 	t1 := RequireTipset(t, q4)
 	iter := chain.IterAncestors(ctx, chainer, t1)
 
-	fm := NewStorageFaultMonitor(&TestMinerPorcelain{}, xavier)
+	fm := NewStorageFaultMonitor(&TestMinerPorcelain{}, alwaysHasPower)
 	faults, err := fm.HandleNewTipSet(ctx, iter, t1)
 	assert.NoError(t, err)
 	assert.Empty(t, faults)
-
-	t.Run("error when submitPoSt is late", func(t *testing.T) {
-		require.True(t, false)
-	})
-
 }
 
 func TestMinerLastSeen(t *testing.T) {
@@ -187,13 +166,48 @@ func RequireEnqueue(ctx context.Context, t *testing.T, q *core.MessageQueue, msg
 	return msg
 }
 
-type TestMinerPorcelain struct{}
+type TestMinerPorcelain struct {
+	actorFail   bool
+	actorChFail bool
+}
 
 func (tmp *TestMinerPorcelain) MinerGetProvingPeriod(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error) {
 	return types.NewBlockHeight(1), types.NewBlockHeight(2), nil
 }
 func (tmp *TestMinerPorcelain) MinerGetGenerationAttackThreshold(ctx context.Context, miner address.Address) (*types.BlockHeight, error) {
 	return types.NewBlockHeight(100), nil
+}
+
+func (tmp *TestMinerPorcelain) ActorLs(ctx context.Context) (<-chan state.GetAllActorsResult, error) {
+	out := make(chan state.GetAllActorsResult)
+
+	if tmp.actorFail {
+		return nil, errors.New("ACTOR FAILURE")
+	}
+
+	go func() {
+		defer close(out)
+		for i := 0; i < 5; i++ {
+			if tmp.actorChFail {
+				out <- state.GetAllActorsResult{
+					Error: errors.New("ACTOR CHANNEL FAILURE"),
+				}
+			} else {
+				minerAddr := address.NewForTestGetter()()
+				actor := actor.Actor{Code: types.MinerActorCodeCid}
+				out <- state.GetAllActorsResult{
+					Address: minerAddr.String(),
+					Actor:   &actor,
+				}
+			}
+		}
+	}()
+
+	return out, nil
+}
+
+func (tmp *TestMinerPorcelain) MessageQuery(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error) {
+	return [][]byte{}, nil
 }
 
 func assertLastSeenAt(t *testing.T, iter TSIter, miner address.Address, limit, expectedBh uint64) {
@@ -207,4 +221,8 @@ func assertNeverSeen(t *testing.T, iter TSIter, miner address.Address, limit uin
 	bh, err := MinerLastSeen(miner, iter, types.NewBlockHeight(limit))
 	require.NoError(t, err)
 	assert.Nil(t, bh)
+}
+
+func alwaysHasPower(context.Context, address.Address, types.TipSet) (bool, error) {
+	return true, nil
 }

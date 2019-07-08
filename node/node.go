@@ -865,7 +865,7 @@ func (node *Node) StartMining(ctx context.Context) error {
 		return errors.Wrap(err, "failed to initialize storage miner")
 	}
 	node.StorageMiner = storageMiner
-	node.StorageFaultMonitor = consensus.NewStorageFaultMonitor(node.PorcelainAPI, minerAddr)
+	node.StorageFaultMonitor = consensus.NewStorageFaultMonitor(node.PorcelainAPI, &node.PowerTable)
 
 	// loop, turning sealing-results into commitSector messages to be included
 	// in the chain

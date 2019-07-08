@@ -2,26 +2,15 @@ package consensus
 
 import (
 	"context"
+
 	"github.com/ipfs/go-cid"
 
 	logging "github.com/ipfs/go-log"
 
 	"github.com/filecoin-project/go-filecoin/address"
+	"github.com/filecoin-project/go-filecoin/state"
 	"github.com/filecoin-project/go-filecoin/types"
 )
-
-// TSIter is an iterator over a TipSet
-type TSIter interface {
-	Complete() bool
-	Next() error
-	Value() types.TipSet
-}
-
-// MonitorPorcelain is an interface for the functionality StorageFaultMonitor needs
-type MonitorPorcelain interface {
-	MinerGetProvingPeriod(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error)
-	MinerGetGenerationAttackThreshold(context.Context, address.Address) (*types.BlockHeight, error)
-}
 
 const (
 	// AfterProvingPeriod indicates the miner did not submitPoSt within the proving period
@@ -33,6 +22,21 @@ const (
 	// period, but one was expected
 	MissingProof = 53
 )
+
+// TSIter is an iterator over a TipSet
+type TSIter interface {
+	Complete() bool
+	Next() error
+	Value() types.TipSet
+}
+
+// MonitorPorcelain is an interface for the functionality StorageFaultMonitor needs
+type MonitorPorcelain interface {
+	ActorLs(context.Context) (<-chan state.GetAllActorsResult, error)
+	MessageQuery(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error)
+	MinerGetProvingPeriod(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error)
+	MinerGetGenerationAttackThreshold(context.Context, address.Address) (*types.BlockHeight, error)
+}
 
 // StorageFault holds a record of a miner storage fault
 type StorageFault struct {
@@ -46,69 +50,113 @@ type StorageFault struct {
 // Storage faults are distinct from consensus faults.
 // See https://github.com/filecoin-project/specs/blob/master/faults.md
 type StorageFaultMonitor struct {
-	minerAddr address.Address
-	porc      MonitorPorcelain
-	pdStart   *types.BlockHeight
-	pdEnd     *types.BlockHeight
-	gat       *types.BlockHeight
-	log       logging.EventLogger
+	porc          MonitorPorcelain
+	log           logging.EventLogger
+	minerHasPower func(ctx context.Context, minerAddr address.Address, ts types.TipSet) (bool, error)
+	newTs         types.TipSet
 }
 
-// NewStorageFaultMonitor creates a new StorageFaultMonitor with the provided porcelain
-func NewStorageFaultMonitor(porcelain MonitorPorcelain, minerAddr address.Address) *StorageFaultMonitor {
+// NewStorageFaultMonitor creates a new StorageFaultMonitor with the provided porcelain and function
+// to get miner power
+func NewStorageFaultMonitor(
+	porcelain MonitorPorcelain,
+	hasPowerFunc func(ctx context.Context, minerAddr address.Address, ts types.TipSet) (bool, error),
+) *StorageFaultMonitor {
 	return &StorageFaultMonitor{
-		minerAddr: minerAddr,
-		porc:      porcelain,
-		log:       logging.Logger("StorageFaultMonitor"),
+		porc:          porcelain,
+		minerHasPower: hasPowerFunc,
+		log:           logging.Logger("StorageFaultMonitor"),
 	}
 }
 
 // HandleNewTipSet receives an iterator over the current chain, and a new tipset
 // and checks the new tipset for storage faults, iterating over iter
 func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter, newTs types.TipSet) ([]*StorageFault, error) {
+
+	sfm.newTs = newTs
+
 	var emptyFaults []*StorageFault
 
 	// iterate over blocks in the new tipset and detect faults
 	// Maybe hash all the miner addresses with submitPoSts first & then go down the chain once
 	head := iter.Value()
-	bh, err := head.Height()
+	_, err := head.Height()
 	if err != nil {
 		return emptyFaults, err
 	}
-	var minersSeen []*address.Address
-
-	sfm.pdStart, sfm.pdEnd, err = sfm.porc.MinerGetProvingPeriod(ctx, sfm.minerAddr)
-	if err != nil {
-		return emptyFaults, err
-	}
-
-	sfm.gat, err = sfm.porc.MinerGetGenerationAttackThreshold(ctx, sfm.minerAddr)
-	if err != nil {
-		return emptyFaults, err
-	}
+	var minersSeen []address.Address
 	faults := emptyFaults
 
+	// collect all miners submitting PoSts this tipset
 	for i := 0; i < head.Len(); i++ {
 		blk := head.At(i)
 		for _, msg := range blk.Messages {
 			m := msg.Method
-			miner := msg.From
-			minersSeen = append(minersSeen, miner)
 			switch m {
 			case "submitPost":
-				// get FaultList from params
-				// iterate over FaultList and add
+				// Miners sending sumbitPost messages are self-reporting & self-penalizing
+				minersSeen = append(minersSeen, msg.From)
 			default:
 				continue
 			}
 		}
 	}
-	// pass minersSeen to func that checks
+	// collect miner actors in actorLS
+	// subtract minersSeen
+	// collect miner actor proving periods & power
+	// traverse the chain back
 	return faults, nil
 }
 
-func missingPoSt() bool {
-	return false
+// minerActorsWithPower iterates over actors returned from ActorLs and returns a list of
+// miner addresses for miners with power onl
+func (sfm *StorageFaultMonitor) minerActorsWithPower(ctx context.Context) ([]address.Address, error) {
+	var miners []address.Address
+
+	actorsCh, err := sfm.porc.ActorLs(ctx)
+	if err != nil {
+		return miners, err
+	}
+	for a := range actorsCh {
+		if a.Error != nil {
+			return miners, a.Error
+		}
+		if !a.Actor.Code.Equals(types.MinerActorCodeCid) {
+			continue
+		}
+
+		miner, err := address.NewFromString(a.Address)
+		if err != nil {
+			return miners, err
+		}
+		hasPower, err := sfm.minerHasPower(ctx, miner, sfm.newTs)
+		if err != nil {
+			return miners, err
+		}
+
+		if hasPower {
+			miners = append(miners, miner)
+		}
+	}
+	return miners, nil
+}
+
+type minerStats struct {
+	ProvingPeriodStart types.BlockHeight
+	ProvingPeriodEnd   types.BlockHeight
+}
+
+// minerStats collects proving period starts and ends for each miner
+// Note this causes a message post for each miner
+func (sfm *StorageFaultMonitor) minerStats(ctx context.Context, minerAddrs []address.Address) (*map[address.Address]minerStats, error) {
+
+	result := make(map[address.Address]minerStats)
+
+	// populate with minerAddrs with power, plus their proving period values
+	for _, m := range minerAddrs {
+		result[m] = minerStats{}
+	}
+	return &result, nil
 }
 
 // MinerLastSeen returns the block height at which miner last sent a `submitPost` message, or
