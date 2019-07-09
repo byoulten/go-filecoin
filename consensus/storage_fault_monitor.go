@@ -3,8 +3,6 @@ package consensus
 import (
 	"context"
 
-	"github.com/ipfs/go-cid"
-
 	logging "github.com/ipfs/go-log"
 
 	"github.com/filecoin-project/go-filecoin/address"
@@ -40,20 +38,20 @@ type MonitorPorcelain interface {
 
 // StorageFault holds a record of a miner storage fault
 type StorageFault struct {
-	Code     uint8
-	Miner    address.Address
-	BlockCID cid.Cid
-	// LastSeenBlockHeight?
+	Code      uint8
+	MinerAddr address.Address
+	AtHeight  uint64
 }
 
 // StorageFaultMonitor checks each new tipset for storage faults, a.k.a. market faults.
 // Storage faults are distinct from consensus faults.
 // See https://github.com/filecoin-project/specs/blob/master/faults.md
 type StorageFaultMonitor struct {
-	porc          MonitorPorcelain
+	ctx           context.Context
 	log           logging.EventLogger
 	minerHasPower func(ctx context.Context, minerAddr address.Address, ts types.TipSet) (bool, error)
 	newTs         types.TipSet
+	porc          MonitorPorcelain
 }
 
 // NewStorageFaultMonitor creates a new StorageFaultMonitor with the provided porcelain and function
@@ -70,22 +68,23 @@ func NewStorageFaultMonitor(
 }
 
 // HandleNewTipSet receives an iterator over the current chain, and a new tipset
-// and checks the new tipset for storage faults, iterating over iter
-func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter, newTs types.TipSet) ([]*StorageFault, error) {
+// and looks for missing, expected submitPoSts
+// Miners without power and those that posted proofs to newTs are skipped
+func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter, newTs types.TipSet) (*[]StorageFault, error) {
 
 	sfm.newTs = newTs
+	sfm.ctx = ctx
 
-	var emptyFaults []*StorageFault
+	var emptyFaults []StorageFault
 
 	// iterate over blocks in the new tipset and detect faults
 	// Maybe hash all the miner addresses with submitPoSts first & then go down the chain once
 	head := iter.Value()
 	_, err := head.Height()
 	if err != nil {
-		return emptyFaults, err
+		return &emptyFaults, err
 	}
 	var minersSeen []address.Address
-	faults := emptyFaults
 
 	// collect all miners submitting PoSts this tipset
 	for i := 0; i < head.Len(); i++ {
@@ -101,35 +100,52 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, iter TSIter
 			}
 		}
 	}
-	// collect miner actors in actorLS
-	// subtract minersSeen
+	minersToCheck, err := sfm.unseenMinersWithPower(&minersSeen)
+	if err != nil {
+		return &emptyFaults, err
+	}
+
 	// collect miner actor proving periods & power
+	stats, err := sfm.minerStats(minersToCheck)
+	if err != nil {
+		return &emptyFaults, err
+	}
+
+	faults, err := sfm.collectMinerFaults(stats)
+
 	// traverse the chain back
 	return faults, nil
 }
 
-// minerActorsWithPower iterates over actors returned from ActorLs and returns a list of
-// miner addresses for miners with power onl
-func (sfm *StorageFaultMonitor) minerActorsWithPower(ctx context.Context) ([]address.Address, error) {
+// unseenMinersWithPower iterates over actors returned from ActorLs and returns a list of
+// miner addresses for miners with power only, except the ones provided by minersSeen
+func (sfm *StorageFaultMonitor) unseenMinersWithPower(minersSeen *[]address.Address) ([]address.Address, error) {
 	var miners []address.Address
 
-	actorsCh, err := sfm.porc.ActorLs(ctx)
+	// collect miner actors in actorLS
+	actorsCh, err := sfm.porc.ActorLs(sfm.ctx)
 	if err != nil {
 		return miners, err
 	}
-	for a := range actorsCh {
-		if a.Error != nil {
-			return miners, a.Error
+	for actor := range actorsCh {
+		if actor.Error != nil {
+			return miners, actor.Error
 		}
-		if !a.Actor.Code.Equals(types.MinerActorCodeCid) {
+		if !actor.Actor.Code.Equals(types.MinerActorCodeCid) {
 			continue
 		}
 
-		miner, err := address.NewFromString(a.Address)
+		miner, err := address.NewFromString(actor.Address)
 		if err != nil {
 			return miners, err
 		}
-		hasPower, err := sfm.minerHasPower(ctx, miner, sfm.newTs)
+
+		// subtract minersSeen
+		if indexOfAddress(minersSeen, miner) >= 0 {
+			continue
+		}
+
+		hasPower, err := sfm.minerHasPower(sfm.ctx, miner, sfm.newTs)
 		if err != nil {
 			return miners, err
 		}
@@ -142,19 +158,45 @@ func (sfm *StorageFaultMonitor) minerActorsWithPower(ctx context.Context) ([]add
 }
 
 type minerStats struct {
-	ProvingPeriodStart types.BlockHeight
-	ProvingPeriodEnd   types.BlockHeight
+	MinerAddr          address.Address
+	ProvingPeriodStart *types.BlockHeight
+	ProvingPeriodEnd   *types.BlockHeight
 }
 
 // minerStats collects proving period starts and ends for each miner
 // Note this causes a message post for each miner
-func (sfm *StorageFaultMonitor) minerStats(ctx context.Context, minerAddrs []address.Address) (*map[address.Address]minerStats, error) {
+func (sfm *StorageFaultMonitor) minerStats(minerAddrs []address.Address) (*[]minerStats, error) {
 
-	result := make(map[address.Address]minerStats)
-
-	// populate with minerAddrs with power, plus their proving period values
+	var result []minerStats
 	for _, m := range minerAddrs {
-		result[m] = minerStats{}
+		start, end, err := sfm.porc.MinerGetProvingPeriod(sfm.ctx, m)
+		if err != nil {
+			return &result, nil
+		}
+		result = append(result, minerStats{
+			MinerAddr:          m,
+			ProvingPeriodStart: start,
+			ProvingPeriodEnd:   end,
+		})
+	}
+	return &result, nil
+}
+
+func (sfm *StorageFaultMonitor) collectMinerFaults(stats *[]minerStats) (*[]StorageFault, error) {
+	var result []StorageFault
+
+	height, err := sfm.newTs.Height()
+	if err != nil {
+		return &result, err
+	}
+
+	for _, ms := range *stats {
+		sf := StorageFault{
+			MinerAddr: ms.MinerAddr,
+			Code:      AfterProvingPeriod,
+			AtHeight:  height,
+		}
+		result = append(result, sf)
 	}
 	return &result, nil
 }
@@ -196,4 +238,15 @@ func poStMessageFrom(miner address.Address, msgs []*types.SignedMessage) (msg *t
 		}
 	}
 	return nil
+}
+
+// indexOfAddress searches for the given address in the list.
+// Returns -1 if the address is not found
+func indexOfAddress(addrList *[]address.Address, addr address.Address) int64 {
+	for i, a := range *addrList {
+		if a.String() == addr.String() {
+			return int64(i)
+		}
+	}
+	return -1
 }

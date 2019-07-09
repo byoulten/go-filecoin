@@ -19,23 +19,20 @@ import (
 	"github.com/filecoin-project/go-filecoin/types"
 )
 
-func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
+func TestHandleNewTipSet_AllMinersSubmitPoSt(t *testing.T) {
 	tf.UnitTest(t)
 
 	ctx := context.Background()
-	keys := types.MustGenerateKeyInfo(2, 42)
-	mm := types.NewMessageMaker(t, keys)
+
+	mm, chainer, root := makeMessageMakerChainerRoot(t, 2)
 
 	beyonce := mm.Addresses()[0]
 	davante := mm.Addresses()[1]
 
-	chainer := th.NewFakeChainProvider()
-	root := chainer.NewBlock(0)
-
 	q := core.NewMessageQueue()
 	msgs := []*types.SignedMessage{
 		RequireEnqueue(ctx, t, q, mm.NewSubmiPoStMsg(beyonce, 1), 100),
-		RequireEnqueue(ctx, t, q, mm.NewSignedMessage(davante, 2), 101),
+		RequireEnqueue(ctx, t, q, mm.NewSubmiPoStMsg(davante, 2), 101),
 	}
 
 	newBlk := chainer.NewBlockWithMessages(1, msgs, root)
@@ -48,18 +45,91 @@ func TestStorageFaultMonitor_HandleNewTipSet(t *testing.T) {
 	assert.Empty(t, faults)
 }
 
+func TestHandleNewTipSet_NoMinersHavePower(t *testing.T) {
+	ctx := context.Background()
+	mm, chainer, root := makeMessageMakerChainerRoot(t, 2)
+
+	beyonce := mm.Addresses()[0]
+	davante := mm.Addresses()[1]
+
+	q := core.NewMessageQueue()
+	msgs := []*types.SignedMessage{
+		RequireEnqueue(ctx, t, q, mm.NewSignedMessage(beyonce, 1), 100),
+		RequireEnqueue(ctx, t, q, mm.NewSignedMessage(davante, 2), 101),
+	}
+	newBlk := chainer.NewBlockWithMessages(1, msgs, root)
+	t1 := RequireTipset(t, newBlk)
+	iter := chain.IterAncestors(ctx, chainer, t1)
+
+	fm := NewStorageFaultMonitor(&TestMinerPorcelain{}, neverHasPower)
+	faults, err := fm.HandleNewTipSet(ctx, iter, t1)
+	assert.NoError(t, err)
+	assert.Empty(t, faults)
+
+}
+
+func makeMessageMakerChainerRoot(t *testing.T, howMany int) (*types.MessageMaker, *th.FakeChainProvider, *types.Block) {
+	keys := types.MustGenerateKeyInfo(howMany, 42)
+	mm := types.NewMessageMaker(t, keys)
+
+	chainer := th.NewFakeChainProvider()
+	root := chainer.NewBlock(0)
+
+	return mm, chainer, root
+}
+
+// 5 actors
+// 1. 3 with power and no submitPoSts
+func TestHandleNewTipSet_NoMinersSubmitPoSt(t *testing.T) {
+	ctx := context.Background()
+
+	mm, chainer, root := makeMessageMakerChainerRoot(t, 5)
+
+	ape := mm.Addresses()[0]
+	bat := mm.Addresses()[1]
+	cat := mm.Addresses()[2]
+	dog := mm.Addresses()[3]
+	elf := mm.Addresses()[4]
+
+	q := core.NewMessageQueue()
+	msgs := []*types.SignedMessage{
+		RequireEnqueue(ctx, t, q, mm.NewSignedMessage(dog, 1), 100),
+		RequireEnqueue(ctx, t, q, mm.NewSignedMessage(elf, 2), 101),
+	}
+
+	newBlk := chainer.NewBlockWithMessages(1, msgs, root)
+	t1 := RequireTipset(t, newBlk)
+	iter := chain.IterAncestors(ctx, chainer, t1)
+
+	hasPower := func(ctx context.Context, minerAddr address.Address, ts types.TipSet) (bool, error) {
+		mastr := minerAddr.String()
+		if mastr == ape.String() || mastr == bat.String() || mastr == cat.String() {
+			return true, nil
+		}
+		return false, nil
+	}
+
+	fm := NewStorageFaultMonitor(&TestMinerPorcelain{}, hasPower)
+	faults, err := fm.HandleNewTipSet(ctx, iter, t1)
+	require.NoError(t, err)
+	require.NotNil(t, faults)
+	assert.NoError(t, err)
+	assert.Len(t, *faults, 3)
+
+}
+
+// 2. 3 with power and all submitPoSts
+// 3. 5 with power and 2 submitPoSts, remaining 3 posted within proving periods
+// 4. 5 with power and 2 submitPoSts, 1 posted within proving period, 1 posted before GAT, 1 missing completely
+
 func TestStorageFaultMonitor_HandleNewTipSet_LateSubmission(t *testing.T) {
 	tf.UnitTest(t)
 
 	ctx := context.Background()
-	keys := types.MustGenerateKeyInfo(2, 42)
-	mm := types.NewMessageMaker(t, keys)
+	mm, chainer, root := makeMessageMakerChainerRoot(t, 2)
 
 	xavier := mm.Addresses()[0]
 	yoli := mm.Addresses()[1]
-
-	chainer := th.NewFakeChainProvider()
-	root := chainer.NewBlock(0)
 
 	q := core.NewMessageQueue()
 	msgs := []*types.SignedMessage{
@@ -167,8 +237,21 @@ func RequireEnqueue(ctx context.Context, t *testing.T, q *core.MessageQueue, msg
 }
 
 type TestMinerPorcelain struct {
-	actorFail   bool
-	actorChFail bool
+	actorFail           bool
+	actorChFail         bool
+	ActorLister         func(ctx context.Context) (<-chan state.GetAllActorsResult, error)
+	ProvingPeriodGetter func(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error)
+	GATGetter           func(ctx context.Context, miner address.Address) (*types.BlockHeight, error)
+	MessageQueryer      func(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error)
+}
+
+func NewDefaultTestMinerPorcelain(actors []address.Address) *TestMinerPorcelain {
+	tmp := TestMinerPorcelain{}
+	tmp.ActorLister = tmp.makeActorLs(actors)
+	tmp.ProvingPeriodGetter = tmp.MinerGetProvingPeriod
+	tmp.GATGetter = tmp.MinerGetGenerationAttackThreshold
+	tmp.MessageQueryer = tmp.MessageQuery
+	return &tmp
 }
 
 func (tmp *TestMinerPorcelain) MinerGetProvingPeriod(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error) {
@@ -176,6 +259,36 @@ func (tmp *TestMinerPorcelain) MinerGetProvingPeriod(context.Context, address.Ad
 }
 func (tmp *TestMinerPorcelain) MinerGetGenerationAttackThreshold(ctx context.Context, miner address.Address) (*types.BlockHeight, error) {
 	return types.NewBlockHeight(100), nil
+}
+
+func (tmp *TestMinerPorcelain) makeActorLs(actorAddrs []address.Address) func(ctx context.Context) (<-chan state.GetAllActorsResult, error) {
+	return func(ctx context.Context) (<-chan state.GetAllActorsResult, error) {
+		out := make(chan state.GetAllActorsResult)
+
+		if tmp.actorFail {
+			return nil, errors.New("ACTOR FAILURE")
+		}
+
+		go func() {
+			defer close(out)
+			for i, addr := range actorAddrs {
+				if tmp.actorChFail {
+					out <- state.GetAllActorsResult{
+						Error: errors.New("ACTOR CHANNEL FAILURE"),
+					}
+				} else {
+					act := actor.Actor{Code: types.MinerActorCodeCid}
+					out <- state.GetAllActorsResult{
+						Address: addr.String(),
+						Actor:   &act,
+					}
+				}
+			}
+		}()
+
+		return out, nil
+
+	}
 }
 
 func (tmp *TestMinerPorcelain) ActorLs(ctx context.Context) (<-chan state.GetAllActorsResult, error) {
@@ -225,4 +338,8 @@ func assertNeverSeen(t *testing.T, iter TSIter, miner address.Address, limit uin
 
 func alwaysHasPower(context.Context, address.Address, types.TipSet) (bool, error) {
 	return true, nil
+}
+
+func neverHasPower(context.Context, address.Address, types.TipSet) (bool, error) {
+	return false, nil
 }
