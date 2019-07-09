@@ -298,7 +298,7 @@ func (p *DefaultProcessor) ApplyMessage(ctx context.Context, st state.Tree, vms 
 	span.AddAttributes(trace.StringAttribute("message", msgCid.String()))
 	defer tracing.AddErrorEndSpan(ctx, span, &err)
 
-	// used for fmlog timer call below
+	// used for log timer call below
 	amsw := amTimer.Start(ctx)
 	defer amsw.Stop(ctx)
 
