@@ -247,18 +247,10 @@ type TestMinerPorcelain struct {
 
 func NewDefaultTestMinerPorcelain(actors []address.Address) *TestMinerPorcelain {
 	tmp := TestMinerPorcelain{}
+	// replace by querying storage market for storage actors?
 	tmp.ActorLister = tmp.makeActorLs(actors)
-	tmp.ProvingPeriodGetter = tmp.MinerGetProvingPeriod
-	tmp.GATGetter = tmp.MinerGetGenerationAttackThreshold
 	tmp.MessageQueryer = tmp.MessageQuery
 	return &tmp
-}
-
-func (tmp *TestMinerPorcelain) MinerGetProvingPeriod(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error) {
-	return types.NewBlockHeight(1), types.NewBlockHeight(2), nil
-}
-func (tmp *TestMinerPorcelain) MinerGetGenerationAttackThreshold(ctx context.Context, miner address.Address) (*types.BlockHeight, error) {
-	return types.NewBlockHeight(100), nil
 }
 
 func (tmp *TestMinerPorcelain) makeActorLs(actorAddrs []address.Address) func(ctx context.Context) (<-chan state.GetAllActorsResult, error) {

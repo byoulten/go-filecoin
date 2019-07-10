@@ -476,21 +476,6 @@ func TestMinerGetProvingPeriod(t *testing.T) {
 	assert.True(t, end.Equal(expEnd))
 }
 
-type minerGetThresholdPlumbing struct{}
-
-func (mggat *minerGetThresholdPlumbing) MessageQuery(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error) {
-	return [][]byte{types.NewBlockHeight(5).Bytes()}, nil
-}
-
-func TestMinerGetGenerationAttackThreshold(t *testing.T) {
-	tf.UnitTest(t)
-
-	thr, err := MinerGetGenerationAttackThreshold(context.Background(), &minerGetThresholdPlumbing{}, address.TestAddress2)
-	require.NoError(t, err)
-	expThr := types.NewBlockHeight(5)
-	assert.True(t, thr.Equal(expThr))
-}
-
 type minerGetAskPlumbing struct{}
 
 func (mgop *minerGetAskPlumbing) MessageQuery(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error) {

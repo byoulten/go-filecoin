@@ -32,8 +32,6 @@ type TSIter interface {
 type MonitorPorcelain interface {
 	ActorLs(context.Context) (<-chan state.GetAllActorsResult, error)
 	MessageQuery(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error)
-	MinerGetProvingPeriod(context.Context, address.Address) (*types.BlockHeight, *types.BlockHeight, error)
-	MinerGetGenerationAttackThreshold(context.Context, address.Address) (*types.BlockHeight, error)
 }
 
 // StorageFault holds a record of a miner storage fault
