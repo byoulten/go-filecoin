@@ -166,17 +166,6 @@ type minerStats struct {
 func (sfm *StorageFaultMonitor) minerStats(minerAddrs []address.Address) (*[]minerStats, error) {
 
 	var result []minerStats
-	for _, m := range minerAddrs {
-		start, end, err := sfm.porc.MinerGetProvingPeriod(sfm.ctx, m)
-		if err != nil {
-			return &result, nil
-		}
-		result = append(result, minerStats{
-			MinerAddr:          m,
-			ProvingPeriodStart: start,
-			ProvingPeriodEnd:   end,
-		})
-	}
 	return &result, nil
 }
 

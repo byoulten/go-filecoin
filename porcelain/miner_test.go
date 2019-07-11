@@ -456,26 +456,6 @@ func TestMinerGetPeerID(t *testing.T) {
 	assert.Equal(t, expected, id)
 }
 
-type minerGetProvingPeriodPlumbing struct{}
-
-func (mgppp *minerGetProvingPeriodPlumbing) MessageQuery(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error) {
-
-	start := types.NewBlockHeight(10)
-	end := types.NewBlockHeight(13)
-	return [][]byte{start.Bytes(), end.Bytes()}, nil
-}
-
-func TestMinerGetProvingPeriod(t *testing.T) {
-	tf.UnitTest(t)
-	start, end, err := MinerGetProvingPeriod(context.Background(), &minerGetProvingPeriodPlumbing{}, address.TestAddress2)
-
-	expStart := types.NewBlockHeight(10)
-	expEnd := types.NewBlockHeight(13)
-	require.NoError(t, err)
-	assert.True(t, start.Equal(expStart))
-	assert.True(t, end.Equal(expEnd))
-}
-
 type minerGetAskPlumbing struct{}
 
 func (mgop *minerGetAskPlumbing) MessageQuery(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error) {

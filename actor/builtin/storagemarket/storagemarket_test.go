@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/ipfs/go-cid"
+
 	"github.com/filecoin-project/go-filecoin/abi"
 	"github.com/filecoin-project/go-filecoin/actor"
 	"github.com/filecoin-project/go-filecoin/actor/builtin"
@@ -206,6 +208,37 @@ func requireMakeCommitment(t *testing.T, st state.Tree, vms vm.StorageMap, miner
 	require.NoError(t, err)
 	require.NoError(t, res.ExecutionError)
 	require.Equal(t, uint8(0), res.Receipt.ExitCode)
+}
+
+func mustCreateStorageMiner(ctx context.Context, t *testing.T, st state.Tree, vms vm.StorageMap, minerAddr, minerOwner address.Address) (cid.Cid, *actor.Actor) {
+	miner := th.RequireNewMinerActor(t, vms, minerAddr, minerOwner, 1000, th.RequireRandomPeerID(t), types.ZeroAttoFIL)
+	require.NoError(t, st.SetActor(ctx, minerAddr, miner))
+	stCid, err := st.Flush(ctx)
+	require.NoError(t, err)
+	return stCid, miner
+}
+
+func TestStorageMarketGetMiners(t *testing.T) {
+	tf.UnitTest(t)
+
+	addrGetter := address.NewForTestGetter()
+	ctx := context.Background()
+	st, vms := th.RequireCreateStorages(ctx, t)
+	// Create miner so that update can pass checks
+
+	var mockSigner, _ = types.NewMockSignersAndKeyInfo(3)
+	minerOwner1 := mockSigner.Addresses[0]
+	minerAddr1 := addrGetter()
+	cid1, minerActor1 := mustCreateStorageMiner(ctx, t, st, vms, minerAddr1, minerOwner1)
+	require.NotNil(t, cid1)
+	require.NotNil(t, minerActor1)
+
+	res, err := th.CreateAndApplyTestMessage(t, st, vms, address.StorageMarketAddress, 0, 0, "getMiners", nil)
+	require.NoError(t, err)
+	require.NoError(t, res.ExecutionError)
+	require.Equal(t, uint8(0), res.Receipt.ExitCode)
+
+	require.Len(t, res.Receipt.Return, 1)
 }
 
 func TestUpdateStorage(t *testing.T) {

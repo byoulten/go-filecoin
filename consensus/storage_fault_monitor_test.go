@@ -283,34 +283,6 @@ func (tmp *TestMinerPorcelain) makeActorLs(actorAddrs []address.Address) func(ct
 	}
 }
 
-func (tmp *TestMinerPorcelain) ActorLs(ctx context.Context) (<-chan state.GetAllActorsResult, error) {
-	out := make(chan state.GetAllActorsResult)
-
-	if tmp.actorFail {
-		return nil, errors.New("ACTOR FAILURE")
-	}
-
-	go func() {
-		defer close(out)
-		for i := 0; i < 5; i++ {
-			if tmp.actorChFail {
-				out <- state.GetAllActorsResult{
-					Error: errors.New("ACTOR CHANNEL FAILURE"),
-				}
-			} else {
-				minerAddr := address.NewForTestGetter()()
-				actor := actor.Actor{Code: types.MinerActorCodeCid}
-				out <- state.GetAllActorsResult{
-					Address: minerAddr.String(),
-					Actor:   &actor,
-				}
-			}
-		}
-	}()
-
-	return out, nil
-}
-
 func (tmp *TestMinerPorcelain) MessageQuery(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error) {
 	return [][]byte{}, nil
 }
