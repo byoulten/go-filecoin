@@ -96,7 +96,7 @@ type nodeChainSyncer interface {
 }
 
 type storageFaultMonitor interface {
-	HandleNewTipSet(ctx context.Context, iter consensus.TSIter, newTs types.TipSet) ([]*consensus.StorageFault, error)
+	HandleNewTipSet(context.Context, *types.BlockHeight) error
 }
 
 // Node represents a full Filecoin node.
@@ -720,9 +720,15 @@ func (node *Node) handleNewChainHeads(ctx context.Context, prevHead types.TipSet
 
 				// Storage fault monitor must query miner for proving periods, etc.
 				if node.StorageFaultMonitor != nil {
-					iter := chain.IterAncestors(ctx, node.ChainReader, head)
-					if err := node.StorageFaultMonitor.HandleNewTipSet(ctx, iter, head); err != nil {
-						log.Error("fault monitoring new block from network", err)
+					height, err := head.Height()
+					if err != nil {
+						log.Error("can't get height of new tipset", err)
+					} else {
+						bh := types.NewBlockHeight(height)
+						err := node.StorageFaultMonitor.HandleNewTipSet(ctx, bh)
+						if err != nil {
+							log.Error("fault monitoring new block from network", err)
+						}
 					}
 				} else {
 					// don't silently fail on this - something went horribly wrong
@@ -865,7 +871,7 @@ func (node *Node) StartMining(ctx context.Context) error {
 		return errors.Wrap(err, "failed to initialize storage miner")
 	}
 	node.StorageMiner = storageMiner
-	node.StorageFaultMonitor = consensus.NewStorageFaultMonitor(node.PorcelainAPI, &node.PowerTable)
+	node.StorageFaultMonitor = consensus.NewStorageFaultMonitor(node.PorcelainAPI, minerOwnerAddr)
 
 	// loop, turning sealing-results into commitSector messages to be included
 	// in the chain
