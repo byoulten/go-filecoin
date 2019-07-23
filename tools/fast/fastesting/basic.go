@@ -106,7 +106,7 @@ func (env *TestEnvironment) RequireNewNode() *fast.Filecoin {
 func (env *TestEnvironment) RequireNewNodeStarted() *fast.Filecoin {
 	p := env.RequireNewNode()
 
-	err := series.InitAndStart(env.ctx, p)
+	err := series.InitAndStart(env.ctx, p, nil)
 	require.NoError(env.t, err)
 
 	return p

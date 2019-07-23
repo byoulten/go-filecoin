@@ -94,11 +94,11 @@ func TestRetrievalLocalNetwork(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start Miner
-	err = series.InitAndStart(ctx, miner)
+	err = series.InitAndStart(ctx, miner, nil)
 	require.NoError(t, err)
 
 	// Start Client
-	err = series.InitAndStart(ctx, client)
+	err = series.InitAndStart(ctx, client, nil)
 	require.NoError(t, err)
 
 	// Connect everything to the genesis node so it can issue filecoin when needed
@@ -171,11 +171,11 @@ func TestRetrievalDevnet(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start Miner
-	err = series.InitAndStart(ctx, miner)
+	err = series.InitAndStart(ctx, miner, nil)
 	require.NoError(t, err)
 
 	// Start Client
-	err = series.InitAndStart(ctx, client)
+	err = series.InitAndStart(ctx, client, nil)
 	require.NoError(t, err)
 
 	// Everyone needs FIL to deal with gas costs and make sure their wallets

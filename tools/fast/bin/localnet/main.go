@@ -255,7 +255,7 @@ func main() {
 	var deals []*storagedeal.Response
 
 	for _, miner := range miners {
-		err = series.InitAndStart(ctx, miner)
+		err = series.InitAndStart(ctx, miner, nil)
 		if err != nil {
 			exitcode = handleError(err, "failed series.InitAndStart;")
 			return
@@ -306,7 +306,7 @@ func main() {
 			return
 		}
 
-		err = series.InitAndStart(ctx, client)
+		err = series.InitAndStart(ctx, client, nil)
 		if err != nil {
 			exitcode = handleError(err, "failed series.InitAndStart;")
 			return
