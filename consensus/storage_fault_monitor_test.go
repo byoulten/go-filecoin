@@ -2,11 +2,15 @@ package consensus_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/filecoin-project/go-filecoin/actor/builtin/miner"
 	"github.com/filecoin-project/go-filecoin/address"
 	. "github.com/filecoin-project/go-filecoin/consensus"
 	tf "github.com/filecoin-project/go-filecoin/testhelpers/testflags"
@@ -24,10 +28,58 @@ func TestHandleNewTipSet(t *testing.T) {
 		height := types.NewBlockHeight(1)
 		data, err := cbor.DumpObject(&map[string]uint64{})
 		require.NoError(t, err)
+		queryer := makeQueryer([][]byte{data})
+		ob := outbox{}
+		minerOwnerAddr := address.TestAddress
 
-		fm := NewStorageFaultMonitor(NewDefaultTestMinerPorcelain(false, false, makeQueryer([][]byte{data})), address.TestAddress)
+		fm := NewStorageFaultMonitor(&storageFaultMonitorPorcelain{false, false, queryer}, &ob, minerOwnerAddr)
 		err = fm.HandleNewTipSet(ctx, height)
 		require.NoError(t, err)
+	})
+
+	t.Run("When 3 late miners, sends 3 messages", func(t *testing.T) {
+		getf := address.NewForTestGetter()
+		height := types.NewBlockHeight(100)
+
+		addr1 := getf().String()
+		addr2 := getf().String()
+		addr3 := getf().String()
+
+		data, err := cbor.DumpObject(&map[string]uint64{
+			addr1: miner.PoStStateAfterProvingPeriod,
+			addr2: miner.PoStStateAfterGenerationAttackThreshold,
+			addr3: miner.PoStStateAfterProvingPeriod,
+		})
+		require.NoError(t, err)
+
+		queryer := makeQueryer([][]byte{data})
+		ob := outbox{}
+		minerOwnerAddr := address.TestAddress
+		fm := NewStorageFaultMonitor(&storageFaultMonitorPorcelain{false, false, queryer}, &ob, minerOwnerAddr)
+		err = fm.HandleNewTipSet(ctx, height)
+		assert.NoError(t, err)
+		assert.Equal(t, 3, ob.msgCount)
+	})
+
+	t.Run("When Send fails, get collection of all errors + no messages", func(t *testing.T) {
+		getf := address.NewForTestGetter()
+		height := types.NewBlockHeight(100)
+		addr1 := getf().String()
+		addr2 := getf().String()
+
+		data, err := cbor.DumpObject(&map[string]uint64{
+			addr1: miner.PoStStateAfterProvingPeriod,
+			addr2: miner.PoStStateAfterProvingPeriod,
+		})
+		require.NoError(t, err)
+
+		queryer := makeQueryer([][]byte{data})
+		ob := outbox{failSend: true, failErr: "Boom"}
+		minerOwnerAddr := address.TestAddress
+		fm := NewStorageFaultMonitor(&storageFaultMonitorPorcelain{false, false, queryer}, &ob, minerOwnerAddr)
+		err = fm.HandleNewTipSet(ctx, height)
+		assert.Error(t, err, "Boom\nBoom")
+		assert.Equal(t, 0, ob.msgCount)
 	})
 
 }
@@ -38,41 +90,36 @@ func makeQueryer(returnData [][]byte) msgQueryer {
 	}
 }
 
-// 5 actors
-// 1. 3 with power and no submitPoSts
-func TestHandleNewTipSet_NoMinersSubmitPoSt(t *testing.T) {
-}
-
-// 2. 3 with power and all submitPoSts
-// 3. 5 with power and 2 submitPoSts, remaining 3 posted within proving periods
-// 4. 5 with power and 2 submitPoSts, 1 posted within proving period, 1 posted before GAT, 1 missing completely
-
-func TestStorageFaultMonitor_HandleNewTipSet_LateSubmission(t *testing.T) {
-}
-
-func RequireTipset(t *testing.T, blocks ...*types.Block) types.TipSet {
-	set, err := types.NewTipSet(blocks...)
-	require.NoError(t, err)
-	return set
-}
-
 type msgQueryer func(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error)
 
-type TestMinerPorcelain struct {
+type storageFaultMonitorPorcelain struct {
 	actorFail   bool
 	actorChFail bool
 	Queryer     msgQueryer
 }
 
-func NewDefaultTestMinerPorcelain(actorFail, actorChFail bool, queryer msgQueryer) *TestMinerPorcelain {
-	tmp := TestMinerPorcelain{
-		actorChFail: actorChFail,
-		actorFail:   actorFail,
-		Queryer:     queryer,
-	}
-	return &tmp
+func (tmp *storageFaultMonitorPorcelain) MessageQuery(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error) {
+	return tmp.Queryer(ctx, optFrom, to, method, params)
 }
 
-func (tmp *TestMinerPorcelain) MessageQuery(ctx context.Context, optFrom, to address.Address, method string, params ...interface{}) ([][]byte, error) {
-	return tmp.Queryer(ctx, optFrom, to, method, params)
+type outbox struct {
+	failSend bool
+	failErr  string
+	msgCount int
+}
+
+func (ob *outbox) Send(ctx context.Context,
+	from, to address.Address,
+	value types.AttoFIL,
+	gasPrice types.AttoFIL,
+	gasLimit types.GasUnits,
+	bcast bool,
+	method string,
+	params ...interface{}) (out cid.Cid, err error) {
+	if ob.failSend {
+		return cid.Undef, errors.New(ob.failErr)
+	}
+	ob.msgCount++
+	// we ignore the CID returned from Send anyway
+	return cid.Undef, nil
 }
