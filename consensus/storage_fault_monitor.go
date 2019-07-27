@@ -2,8 +2,6 @@ package consensus
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log"
@@ -77,26 +75,19 @@ func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, currentHeig
 		return errors.FaultErrorWrapf(err, "expected *map[string]uint64 but got %T", lms)
 	}
 
-	var errStrs []string
 	// Slash late miners.
 	// Keep trying to slash even if something goes wrong.
 	for minerStr := range *lms {
 		minerAddr, err := address.NewFromString(minerStr)
-
 		if err != nil {
-			errStrs = append(errStrs, fmt.Sprintf("failed to convert %s to address.Address", minerStr))
-			continue
+			return errors.FaultErrorWrap(err, "")
 		}
 
 		// send slash message, don't broadcast it, and don't wait for message to appear on chain.
 		_, err = sfm.outbox.Send(ctx, sfm.msgSender, minerAddr, types.ZeroAttoFIL, types.ZeroAttoFIL, types.NewGasUnits(0), false, "slashStorageFault", nil)
-
 		if err != nil {
-			errStrs = append(errStrs, err.Error())
+			return errors.FaultErrorWrap(err, "")
 		}
-	}
-	if len(errStrs) > 0 {
-		return errors.NewFaultError(strings.Join(errStrs, "\n"))
 	}
 	return nil
 }
