@@ -21,11 +21,3 @@ func AssertStdErrContains(t *testing.T, fast *fast.Filecoin, expected string) {
 	require.True(t, written > 0)
 	assert.Contains(t, string(w.Bytes()), expected)
 }
-
-func RequireGetLastStdErr(t *testing.T, fast *fast.Filecoin) string {
-	var cmdOutBytes []byte
-	w := bytes.NewBuffer(cmdOutBytes)
-	_, err := io.Copy(w, fast.LastCmdStdErr())
-	require.NoError(t, err)
-	return string(w.Bytes())
-}

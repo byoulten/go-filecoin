@@ -29,7 +29,7 @@ func TestSlashing(t *testing.T) {
 
 		// Give the deal time to complete
 		ctx, env := fastesting.NewTestEnvironment(context.Background(), t, fast.FilecoinOpts{
-			InitOpts: []fast.ProcessInitOption{fast.POAutoSealIntervalSeconds(1)},
+			InitOpts:   []fast.ProcessInitOption{fast.POAutoSealIntervalSeconds(1)},
 			DaemonOpts: []fast.ProcessDaemonOption{fast.POBlockTime(50 * time.Millisecond)},
 		})
 		defer func() {
@@ -55,7 +55,6 @@ func TestSlashing(t *testing.T) {
 		err = series.WaitForDealState(ctx, clientDaemon, dealResponse, storagedeal.Staged)
 		require.NoError(t, err)
 
-
 		require.NoError(t, series.WaitForBlockHeight(ctx, minerDaemon, atLeastStartH.Add(types.NewBlockHeight(duration+1))))
 
 		// Wait until proving period is over.
@@ -73,7 +72,7 @@ func TestSlashing(t *testing.T) {
 		require.NoError(t, err)
 
 		// miner is offline
-		require.NoError(t,minerDaemon.StopDaemon(ctx))
+		require.NoError(t, minerDaemon.StopDaemon(ctx))
 
 		atLeastStartH, err = series.GetHeadBlockHeight(ctx, clientDaemon)
 		require.NoError(t, err)
@@ -122,10 +121,7 @@ func requireMinerClientMakeADeal(ctx context.Context, t *testing.T, minerDaemon,
 
 	minerAddress := requireGetMinerAddress(ctx, t, minerDaemon)
 
-	dealResponse, err := clientDaemon.ClientProposeStorageDeal(ctx, dataCid, minerAddress, askID, duration, true)
-
-	fmt.Println("================================================")
-	fmt.Println(fastesting.RequireGetLastStdErr(t, clientDaemon))
+	dealResponse, err := clientDaemon.ClientProposeStorageDeal(ctx, dataCid, minerAddress, askID, duration, fast.AOAllowDuplicates(true))
 
 	require.NoError(t, err)
 	return dealResponse
@@ -138,9 +134,8 @@ func requireGetMinerAddress(ctx context.Context, t *testing.T, daemon *fast.File
 	return minerAddress
 }
 
-func assertHasPower(ctx context.Context, t *testing.T, d *fast.Filecoin, expPower int64){
+func assertHasPower(ctx context.Context, t *testing.T, d *fast.Filecoin, expPower int64) {
 	actualPower, _, err := d.MinerPower(ctx, requireGetMinerAddress(ctx, t, d))
 	require.NoError(t, err)
-	assert.Equal(t, expPower, actualPower)
+	assert.Equal(t, expPower, actualPower.Int64())
 }
-
