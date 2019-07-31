@@ -6,6 +6,7 @@ import (
 	"github.com/pkg/errors"
 	"go.opencensus.io/trace"
 
+	"github.com/filecoin-project/go-filecoin/chain"
 	"github.com/filecoin-project/go-filecoin/metrics/tracing"
 	"github.com/filecoin-project/go-filecoin/net"
 	"github.com/filecoin-project/go-filecoin/net/pubsub"
@@ -27,7 +28,7 @@ func (node *Node) AddNewBlock(ctx context.Context, b *types.Block) (err error) {
 	}
 
 	log.Debugf("syncing new block: %s", b.Cid().String())
-	if err := node.Syncer.HandleNewTipset(ctx, types.NewTipSetKey(blkCid), node.Host().ID()); err != nil {
+	if err := node.Syncer.HandleNewTipset(ctx, chain.NewPeerHeadInfo(types.NewTipSetKey(blkCid), b.Height, node.Host().ID(), true)); err != nil {
 		return err
 	}
 
@@ -57,7 +58,7 @@ func (node *Node) processBlock(ctx context.Context, pubSubMsg pubsub.Message) (e
 	// Don't be too quick to change that, though: the syncer re-fetching the block
 	// is currently critical to reliable validation.
 	// See https://github.com/filecoin-project/go-filecoin/issues/2962
-	err = node.Syncer.HandleNewTipset(ctx, types.NewTipSetKey(blk.Cid()), from)
+	err = node.Syncer.HandleNewTipset(ctx, chain.NewPeerHeadInfo(types.NewTipSetKey(blk.Cid()), blk.Height, from, true))
 	if err != nil {
 		return errors.Wrap(err, "processing block from network")
 	}

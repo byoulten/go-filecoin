@@ -92,7 +92,7 @@ type nodeChainReader interface {
 }
 
 type nodeChainSyncer interface {
-	HandleNewTipset(ctx context.Context, tipsetCids types.TipSetKey, from peer.ID) error
+	HandleNewTipset(ctx context.Context, ph *chain.PeerHeadInfo) error
 }
 
 // Node represents a full Filecoin node.
@@ -543,8 +543,7 @@ func (node *Node) Start(ctx context.Context) error {
 		// Start up 'hello' handshake service
 		syncCallBack := func(pid peer.ID, cids []cid.Cid, height uint64) {
 			cidSet := types.NewTipSetKey(cids...)
-			err := node.Syncer.HandleNewTipset(context.Background(), cidSet, pid)
-			if err != nil {
+			if err := node.Syncer.HandleNewTipset(context.Background(), chain.NewPeerHeadInfo(cidSet, types.Uint64(height), pid, true)); err != nil {
 				log.Infof("error handling blocks: %s", cidSet.String())
 				return
 			}
