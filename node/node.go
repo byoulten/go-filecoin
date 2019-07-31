@@ -720,7 +720,7 @@ func (node *Node) handleNewChainHeads(ctx context.Context, prevHead types.TipSet
 
 				// Storage fault monitor must query miner for proving periods, etc.
 				if node.StorageFaultMonitor != nil {
-					height, err := head.Height()
+					height, err := newHead.Height()
 					if err != nil {
 						log.Error("can't get height of new tipset", err)
 					} else {
