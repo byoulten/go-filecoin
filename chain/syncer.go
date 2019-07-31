@@ -3,7 +3,6 @@ package chain
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log"
@@ -24,10 +23,6 @@ var reorgCnt *metrics.Int64Counter
 func init() {
 	reorgCnt = metrics.NewInt64Counter("chain/reorg_count", "The number of reorgs that have occurred.")
 }
-
-// The amount of time the syncer will wait while fetching the blocks of a
-// tipset over the network.
-var blkWaitTime = 30 * time.Second
 
 // FinalityLimit is the maximum number of blocks ahead of the current consensus
 // chain height to accept once in caught up mode
@@ -295,6 +290,8 @@ func (syncer *Syncer) widen(ctx context.Context, ts types.TipSet) (types.TipSet,
 	return wts, nil
 }
 
+// NewPeerHeadInfo accepts a peer, its current head state and its trustworthiness
+// and returns a PeerHeadInfo.
 func NewPeerHeadInfo(head types.TipSetKey, height types.Uint64, from peer.ID, trusted bool) *PeerHeadInfo {
 	return &PeerHeadInfo{
 		Head:    head,
@@ -304,6 +301,8 @@ func NewPeerHeadInfo(head types.TipSetKey, height types.Uint64, from peer.ID, tr
 	}
 }
 
+// PeerHeadInfo contains information about a peers current head state and
+// its trustworthiness.
 type PeerHeadInfo struct {
 	Head    types.TipSetKey
 	Height  types.Uint64
