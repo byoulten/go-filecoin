@@ -58,3 +58,19 @@ func (mm *MessageMaker) NewSignedMessage(from address.Address, nonce uint64) *Si
 	require.NoError(mm.t, err)
 	return signed
 }
+
+type ReceiptMaker struct {
+	seq uint
+}
+
+// NewReceiptMaker creates a new receipt maker
+func NewReceiptMaker() *ReceiptMaker {
+	return &ReceiptMaker{0}
+}
+
+// NewReceipt creates a new distinct receipt.
+func (rm *ReceiptMaker) NewReceipt() *MessageReceipt {
+	seq := rm.seq
+	rm.seq++
+	return &MessageReceipt{Return: [][]byte{[]byte(fmt.Sprintf("%d",seq))}}
+}
