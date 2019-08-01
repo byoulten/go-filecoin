@@ -60,6 +60,7 @@ func NewStorageFaultMonitor(plumbing monitorPlumbing, outbox slashingMsgOutbox, 
 // and looks for missing, expected submitPoSts
 // Miners without power and those that posted proofs to newTs are skipped
 func (sfm *StorageFaultMonitor) HandleNewTipSet(ctx context.Context, currentHeight *types.BlockHeight) error {
+	sfm.log.Debug("STORAGE FAULT MONITOR GOT NEW TIPSET")
 	res, err := sfm.plumbing.MessageQuery(ctx, sfm.msgSender, address.StorageMarketAddress, "getLateMiners", nil)
 	if err != nil {
 		return errors.FaultErrorWrap(err, "")
