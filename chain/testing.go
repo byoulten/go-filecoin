@@ -88,7 +88,7 @@ func (f *Builder) AppendOn(parent types.TipSet, width int) types.TipSet {
 }
 
 // AppendManyBlocksOnBlocks appends `height` blocks to the chain.
-func (f *Builder) AppendManyBlocksOnBlocks(height int, parents ...*types.Block) *types.Block {
+func (f *Builder) AppendManyBlocksOnBlocks(height uint, parents ...*types.Block) *types.Block {
 	tip := types.UndefTipSet
 	if len(parents) > 0 {
 		tip = types.RequireNewTipSet(f.t, parents...)
@@ -97,12 +97,12 @@ func (f *Builder) AppendManyBlocksOnBlocks(height int, parents ...*types.Block) 
 }
 
 // AppendManyBlocksOn appends `height` blocks to the chain.
-func (f *Builder) AppendManyBlocksOn(height int, parent types.TipSet) *types.Block {
+func (f *Builder) AppendManyBlocksOn(height uint, parent types.TipSet) *types.Block {
 	return f.BuildManyOn(height, parent, nil).At(0)
 }
 
 // AppendManyOn appends `height` tipsets to the chain.
-func (f *Builder) AppendManyOn(height int, parent types.TipSet) types.TipSet {
+func (f *Builder) AppendManyOn(height uint, parent types.TipSet) types.TipSet {
 	return f.BuildManyOn(height, parent, nil)
 }
 
@@ -121,9 +121,9 @@ func (f *Builder) BuildOn(parent types.TipSet, build func(b *BlockBuilder)) type
 }
 
 // BuildManyOn builds a chain by invoking Build `height` times.
-func (f *Builder) BuildManyOn(height int, parent types.TipSet, build func(b *BlockBuilder)) types.TipSet {
+func (f *Builder) BuildManyOn(height uint, parent types.TipSet, build func(b *BlockBuilder)) types.TipSet {
 	require.True(f.t, height > 0, "")
-	for i := 0; i < height; i++ {
+	for i := uint(0); i < height; i++ {
 		parent = f.Build(parent, 1, singleBuilder(build))
 	}
 	return parent
@@ -151,7 +151,7 @@ func (f *Builder) Build(parent types.TipSet, width int, build func(b *BlockBuild
 	require.NoError(f.t, err)
 
 	for i := 0; i < width; i++ {
-		ticket := make([]byte, binary.Size(f.seq))
+		ticket := make(types.Signature, binary.Size(f.seq))
 		binary.BigEndian.PutUint64(ticket, f.seq)
 		f.seq++
 
@@ -405,6 +405,19 @@ func (f *Builder) RequireTipSet(key types.TipSetKey) types.TipSet {
 	tip, err := f.GetTipSet(key)
 	require.NoError(f.t, err)
 	return tip
+}
+
+// RequireTipSets returns a chain of tipsets from key, which must exist and be long enough.
+func (f *Builder) RequireTipSets(head types.TipSetKey, count uint) []types.TipSet {
+	var tips []types.TipSet
+	var err error
+	for i := uint(0); i < count; i++ {
+		tip := f.RequireTipSet(head)
+		tips = append(tips, tip)
+		head, err = tip.Parents()
+		require.NoError(f.t, err)
+	}
+	return tips
 }
 
 ///// Internals /////

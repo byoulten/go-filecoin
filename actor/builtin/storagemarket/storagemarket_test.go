@@ -11,6 +11,7 @@ import (
 	"github.com/filecoin-project/go-filecoin/actor/builtin"
 	"github.com/filecoin-project/go-filecoin/actor/builtin/miner"
 	"github.com/filecoin-project/go-filecoin/address"
+	"github.com/filecoin-project/go-filecoin/chain"
 	"github.com/filecoin-project/go-filecoin/state"
 	th "github.com/filecoin-project/go-filecoin/testhelpers"
 	tf "github.com/filecoin-project/go-filecoin/testhelpers/testflags"
@@ -169,7 +170,7 @@ func TestStorageMarketGetLateMiners(t *testing.T) {
 		_ = th.CreateTestMiner(t, st, vms, address.TestAddress, th.RequireRandomPeerID(t))
 
 		// 2 of the 3 miners make a commitment
-		blockHeight := 3
+		blockHeight := uint(3)
 		sectorID := uint64(1)
 		requireMakeCommitment(t, st, vms, addr1, blockHeight, sectorID)
 		sectorID = uint64(2)
@@ -200,8 +201,10 @@ func TestStorageMarketGetLateMiners(t *testing.T) {
 	})
 }
 
-func requireMakeCommitment(t *testing.T, st state.Tree, vms vm.StorageMap, minerAddr address.Address, blockHeight int, sectorID uint64) {
-	ancestors := th.RequireTipSetChain(t, blockHeight)
+func requireMakeCommitment(t *testing.T, st state.Tree, vms vm.StorageMap, minerAddr address.Address, blockHeight uint, sectorID uint64) {
+	builder := chain.NewBuilder(t, address.Undef)
+	head := builder.AppendManyOn(blockHeight, types.UndefTipSet)
+	ancestors := builder.RequireTipSets(head.Key(), blockHeight)
 	res, err := th.CreateAndApplyTestMessage(t, st, vms, minerAddr, 0, 3, "commitSector", ancestors, sectorID, th.MakeCommitment(), th.MakeCommitment(), th.MakeCommitment(), th.MakeRandomBytes(types.TwoPoRepProofPartitions.ProofLen()))
 	require.NoError(t, err)
 	require.NoError(t, res.ExecutionError)
